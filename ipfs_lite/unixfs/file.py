@@ -1,3 +1,4 @@
+# ipfs_lite/unixfs/file.py
 import io
 from multiformats import CID
 
@@ -14,15 +15,15 @@ class UnixFSFile:
         self.chunker = Chunker(chunk_size)
 
     def add_file(self, reader: io.BytesIO) -> CID:
-        """Add a file and return root CID."""
+        """Add a file synchronously and return root CID."""
         data = reader.read()
         block = Block.from_data(data, codec="raw")
         self.dag.put(block)
         return block.cid
 
-    def get_file(self, cid: CID) -> io.BytesIO:
-        """Retrieve a file and return as reader."""
-        block = self.dag.get(cid)
+    async def get_file(self, cid: CID) -> io.BytesIO:
+        """Retrieve a file asynchronously."""
+        block = await self.dag.get(cid)
         if block is None:
             raise ValueError(f"Block not found: {cid}")
         return io.BytesIO(block.data)
