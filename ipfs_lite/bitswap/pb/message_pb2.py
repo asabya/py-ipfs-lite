@@ -24,25 +24,25 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rmessage.proto\"\x86\x04\n\x07Message\x12#\n\x08wantlist\x18\x01 \x01(\x0b\x32\x11.Message.Wantlist\x12\x1f\n\x07payload\x18\x03 \x03(\x0b\x32\x0e.Message.Block\x12.\n\x0e\x62lockPresences\x18\x04 \x03(\x0b\x32\x16.Message.BlockPresence\x1a\xe8\x01\n\x08Wantlist\x12(\n\x07\x65ntries\x18\x01 \x03(\x0b\x32\x17.Message.Wantlist.Entry\x12\x0c\n\x04\x66ull\x18\x02 \x01(\x08\x1a\xa3\x01\n\x05\x45ntry\x12\r\n\x05\x62lock\x18\x01 \x01(\x0c\x12\x10\n\x08priority\x18\x02 \x01(\x05\x12\x0e\n\x06\x63\x61ncel\x18\x03 \x01(\x08\x12\x32\n\x08wantType\x18\x04 \x01(\x0e\x32 .Message.Wantlist.Entry.WantType\x12\x14\n\x0csendDontHave\x18\x05 \x01(\x08\"\x1f\n\x08WantType\x12\t\n\x05\x42lock\x10\x00\x12\x08\n\x04Have\x10\x01\x1a%\n\x05\x42lock\x12\x0e\n\x06prefix\x18\x01 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\x1a\x46\n\rBlockPresence\x12\x0b\n\x03\x63id\x18\x01 \x01(\x0c\x12(\n\x04type\x18\x02 \x01(\x0e\x32\x1a.Message.BlockPresenceType\"+\n\x11\x42lockPresenceType\x12\x08\n\x04Have\x10\x00\x12\x0c\n\x08\x44ontHave\x10\x01')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rmessage.proto\x12\x11ipfs_lite.bitswap\"\xf2\x04\n\x07Message\x12\x35\n\x08wantlist\x18\x01 \x01(\x0b\x32#.ipfs_lite.bitswap.Message.Wantlist\x12\x31\n\x07payload\x18\x03 \x03(\x0b\x32 .ipfs_lite.bitswap.Message.Block\x12@\n\x0e\x62lockPresences\x18\x04 \x03(\x0b\x32(.ipfs_lite.bitswap.Message.BlockPresence\x1a\x8c\x02\n\x08Wantlist\x12:\n\x07\x65ntries\x18\x01 \x03(\x0b\x32).ipfs_lite.bitswap.Message.Wantlist.Entry\x12\x0c\n\x04\x66ull\x18\x02 \x01(\x08\x1a\xb5\x01\n\x05\x45ntry\x12\r\n\x05\x62lock\x18\x01 \x01(\x0c\x12\x10\n\x08priority\x18\x02 \x01(\x05\x12\x0e\n\x06\x63\x61ncel\x18\x03 \x01(\x08\x12\x44\n\x08wantType\x18\x04 \x01(\x0e\x32\x32.ipfs_lite.bitswap.Message.Wantlist.Entry.WantType\x12\x14\n\x0csendDontHave\x18\x05 \x01(\x08\"\x1f\n\x08WantType\x12\t\n\x05\x42lock\x10\x00\x12\x08\n\x04Have\x10\x01\x1a%\n\x05\x42lock\x12\x0e\n\x06prefix\x18\x01 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\x1aX\n\rBlockPresence\x12\x0b\n\x03\x63id\x18\x01 \x01(\x0c\x12:\n\x04type\x18\x02 \x01(\x0e\x32,.ipfs_lite.bitswap.Message.BlockPresenceType\"+\n\x11\x42lockPresenceType\x12\x08\n\x04Have\x10\x00\x12\x0c\n\x08\x44ontHave\x10\x01')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'message_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_MESSAGE']._serialized_start=18
-  _globals['_MESSAGE']._serialized_end=536
-  _globals['_MESSAGE_WANTLIST']._serialized_start=148
-  _globals['_MESSAGE_WANTLIST']._serialized_end=380
-  _globals['_MESSAGE_WANTLIST_ENTRY']._serialized_start=217
-  _globals['_MESSAGE_WANTLIST_ENTRY']._serialized_end=380
-  _globals['_MESSAGE_WANTLIST_ENTRY_WANTTYPE']._serialized_start=349
-  _globals['_MESSAGE_WANTLIST_ENTRY_WANTTYPE']._serialized_end=380
-  _globals['_MESSAGE_BLOCK']._serialized_start=382
-  _globals['_MESSAGE_BLOCK']._serialized_end=419
-  _globals['_MESSAGE_BLOCKPRESENCE']._serialized_start=421
-  _globals['_MESSAGE_BLOCKPRESENCE']._serialized_end=491
-  _globals['_MESSAGE_BLOCKPRESENCETYPE']._serialized_start=493
-  _globals['_MESSAGE_BLOCKPRESENCETYPE']._serialized_end=536
+  _globals['_MESSAGE']._serialized_start=37
+  _globals['_MESSAGE']._serialized_end=663
+  _globals['_MESSAGE_WANTLIST']._serialized_start=221
+  _globals['_MESSAGE_WANTLIST']._serialized_end=489
+  _globals['_MESSAGE_WANTLIST_ENTRY']._serialized_start=308
+  _globals['_MESSAGE_WANTLIST_ENTRY']._serialized_end=489
+  _globals['_MESSAGE_WANTLIST_ENTRY_WANTTYPE']._serialized_start=458
+  _globals['_MESSAGE_WANTLIST_ENTRY_WANTTYPE']._serialized_end=489
+  _globals['_MESSAGE_BLOCK']._serialized_start=491
+  _globals['_MESSAGE_BLOCK']._serialized_end=528
+  _globals['_MESSAGE_BLOCKPRESENCE']._serialized_start=530
+  _globals['_MESSAGE_BLOCKPRESENCE']._serialized_end=618
+  _globals['_MESSAGE_BLOCKPRESENCETYPE']._serialized_start=620
+  _globals['_MESSAGE_BLOCKPRESENCETYPE']._serialized_end=663
 # @@protoc_insertion_point(module_scope)
