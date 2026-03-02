@@ -8,6 +8,7 @@ dependencies = [
     "multiformats>=0.3.0",
     "cbor2>=5.0.0",
     "protobuf>=4.0.0",
+    "libp2p>=0.2.0",
 ]
 
 [project.optional-dependencies]
@@ -15,9 +16,7 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
     "pytest-cov>=4.0",
-]
-libp2p = [
-    "libp2p>=0.2.0",
+    "grpcio-tools>=1.50",
 ]
 
 [tool.pytest.ini_options]
@@ -29,4 +28,5 @@ dev-dependencies = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
     "pytest-cov>=4.0",
+    "grpcio-tools>=1.50",
 ]
