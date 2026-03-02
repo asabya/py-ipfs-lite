@@ -129,6 +129,7 @@ def test_dont_have_response():
                     send_dont_have=True,
                 )
                 assert response is not None
+                assert len(response.block_presences) == 1
                 assert response.block_presences[0].type == BlockPresenceType.DontHave
 
     trio.run(_run)

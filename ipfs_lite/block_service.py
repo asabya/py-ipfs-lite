@@ -1,4 +1,5 @@
 # ipfs_lite/block_service.py
+import asyncio
 import logging
 from typing import List, Optional
 
@@ -34,7 +35,6 @@ class BlockService:
         # running event loop is available (e.g. sync or trio contexts).
         if self.exchange is not None:
             try:
-                import asyncio
                 loop = asyncio.get_running_loop()
                 loop.create_task(self.exchange.has_block(block))
             except RuntimeError:
