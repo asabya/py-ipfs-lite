@@ -1,0 +1,38 @@
+syntax = "proto2";
+
+message Message {
+  message Wantlist {
+    message Entry {
+      optional bytes block = 1;
+      optional int32 priority = 2;
+      optional bool cancel = 3;
+      enum WantType {
+        Block = 0;
+        Have = 1;
+      }
+      optional WantType wantType = 4;
+      optional bool sendDontHave = 5;
+    }
+    repeated Entry entries = 1;
+    optional bool full = 2;
+  }
+
+  message Block {
+    optional bytes prefix = 1;
+    optional bytes data = 2;
+  }
+
+  enum BlockPresenceType {
+    Have = 0;
+    DontHave = 1;
+  }
+
+  message BlockPresence {
+    optional bytes cid = 1;
+    optional BlockPresenceType type = 2;
+  }
+
+  optional Wantlist wantlist = 1;
+  repeated Block payload = 3;
+  repeated BlockPresence blockPresences = 4;
+}
