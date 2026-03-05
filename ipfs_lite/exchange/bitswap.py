@@ -6,7 +6,6 @@ from multiformats import CID
 
 from ipfs_lite.block import Block
 from ipfs_lite.bitswap.network import BitswapNetwork
-from ipfs_lite.bitswap.wantlist import WantType
 from ipfs_lite.exchange.interface import Exchange
 
 logger = logging.getLogger(__name__)
@@ -23,9 +22,7 @@ class BitswapExchange(Exchange):
         if not targets:
             logger.warning("No connected peers to fetch block from")
             return None
-        response = await self.network.broadcast_want(
-            targets, cid, want_type=WantType.Block, send_dont_have=True
-        )
+        response = await self.network.broadcast_want(targets, cid)
         if response and response.payload:
             return response.payload[0]
         return None
@@ -38,3 +35,6 @@ class BitswapExchange(Exchange):
 
     async def has_block(self, block: Block) -> None:
         pass  # Future: announce to connected peers
+
+    def notify_new_blocks(self, blocks: list) -> None:
+        self.network.notify_new_blocks(blocks)

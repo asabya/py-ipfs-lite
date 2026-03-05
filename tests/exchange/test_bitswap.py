@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 from ipfs_lite.block import Block
 from ipfs_lite.exchange.bitswap import BitswapExchange
 from ipfs_lite.bitswap.message import Message
-from ipfs_lite.bitswap.wantlist import WantType
 
 
 def _make_peer_info(peer_id="QmTest"):
@@ -19,6 +18,7 @@ async def test_get_block_success():
     block = Block.from_data(b"exchange block", codec="raw")
 
     mock_network = MagicMock()
+    mock_network.get_connected_peers = MagicMock(return_value=[])
     mock_network.broadcast_want = AsyncMock(
         return_value=Message(payload=[block])
     )
@@ -31,7 +31,7 @@ async def test_get_block_success():
     assert result is not None
     assert result.data == b"exchange block"
     mock_network.broadcast_want.assert_called_once_with(
-        [peer_info], block.cid, want_type=WantType.Block, send_dont_have=True
+        [peer_info], block.cid
     )
 
 
@@ -66,7 +66,7 @@ async def test_get_block_tries_multiple_peers():
     assert result is not None
     assert result.data == b"found on second"
     mock_network.broadcast_want.assert_called_once_with(
-        peers, block.cid, want_type=WantType.Block, send_dont_have=True
+        peers, block.cid
     )
 
 
