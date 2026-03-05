@@ -1,5 +1,4 @@
 # tests/bitswap/test_network.py
-import struct
 import pytest
 from multiformats import CID, multihash
 
@@ -31,8 +30,28 @@ class MockStream:
         self.closed = True
 
 
+def _encode_varint(n: int) -> bytes:
+    buf = []
+    while n > 0x7F:
+        buf.append((n & 0x7F) | 0x80)
+        n >>= 7
+    buf.append(n & 0x7F)
+    return bytes(buf)
+
+
+def _decode_varint(data: bytes, pos: int) -> tuple[int, int]:
+    n, shift = 0, 0
+    while True:
+        b = data[pos]; pos += 1
+        n |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            break
+        shift += 7
+    return n, pos
+
+
 def _frame(data: bytes) -> bytes:
-    return struct.pack(">I", len(data)) + data
+    return _encode_varint(len(data)) + data
 
 
 def test_encode_decode_roundtrip():
@@ -80,9 +99,9 @@ async def test_handle_stream_returns_block():
     await network.handle_stream(stream)
 
     assert stream.closed is True
-    # Parse written response
-    resp_len = struct.unpack(">I", stream.written[:4])[0]
-    resp_bytes = bytes(stream.written[4:4 + resp_len])
+    # Parse written response (varint-length-prefixed)
+    resp_len, offset = _decode_varint(bytes(stream.written), 0)
+    resp_bytes = bytes(stream.written[offset:offset + resp_len])
     response = decode_message(resp_bytes)
     assert len(response.payload) == 1
     assert response.payload[0].data == b"streamed block"

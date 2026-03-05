@@ -20,3 +20,19 @@ class DAGService:
     def put(self, block: Block) -> None:
         """Store a node locally and announce to peers."""
         self.block_service.put_block(block)
+
+    def want(self, cids: list, peers: list = []) -> None:
+        """Queue CIDs for background want-sender."""
+        if self.block_service.exchange is not None:
+            self.block_service.exchange.add_wants(cids, peers)
+
+    async def wait_for_block(self, cid: CID) -> Optional[Block]:
+        """Wait for block event (registered via want()), check blockstore on arrival."""
+        block = self.block_service.blockstore.get(cid)
+        if block:
+            return block
+        if self.block_service.exchange is not None:
+            block = await self.block_service.exchange.wait_for_block(cid)
+            if block is not None:
+                self.block_service.blockstore.put(block)
+        return block

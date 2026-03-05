@@ -29,12 +29,14 @@ class IPFSLitePeer:
     def peer_id(self) -> str:
         return str(self.host.get_id())
 
-    async def start(self) -> None:
-        """Register Bitswap protocol handler with the libp2p host."""
+    async def start(self, nursery=None) -> None:
+        """Register Bitswap protocol handler and start background want-sender."""
         self.host.set_stream_handler(
             BitswapNetwork.PROTOCOL_ID,
             self.network.handle_stream,
         )
+        if nursery is not None:
+            nursery.start_soon(self.network._run_sender)
         logger.info(f"IPFSLitePeer started: {self.peer_id}")
 
     async def connect(self, peer_info: Any) -> None:

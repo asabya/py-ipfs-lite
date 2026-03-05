@@ -1,27 +1,27 @@
-syntax = "proto2";
+syntax = "proto3";
 
 package ipfs_lite.bitswap;
 
 message Message {
   message Wantlist {
     message Entry {
-      optional bytes block = 1;
-      optional int32 priority = 2;
-      optional bool cancel = 3;
+      bytes block = 1;
+      int32 priority = 2;
+      bool cancel = 3;
       enum WantType {
         Block = 0;
         Have = 1;
       }
-      optional WantType wantType = 4;
-      optional bool sendDontHave = 5;
+      WantType wantType = 4;
+      bool sendDontHave = 5;
     }
     repeated Entry entries = 1;
-    optional bool full = 2;
+    bool full = 2;
   }
 
   message Block {
-    optional bytes prefix = 1;
-    optional bytes data = 2;
+    bytes prefix = 1;
+    bytes data = 2;
   }
 
   enum BlockPresenceType {
@@ -30,11 +30,11 @@ message Message {
   }
 
   message BlockPresence {
-    optional bytes cid = 1;
-    optional BlockPresenceType type = 2;
+    bytes cid = 1;
+    BlockPresenceType type = 2;
   }
 
-  optional Wantlist wantlist = 1;
+  Wantlist wantlist = 1;
   repeated Block payload = 3;
   repeated BlockPresence blockPresences = 4;
 }

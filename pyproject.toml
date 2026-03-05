@@ -22,3 +22,6 @@ dev-dependencies = [
     "pytest-cov>=4.0",
     "grpcio-tools>=1.50",
 ]
+
+[tool.setuptools.packages.find]
+include = ["ipfs_lite*"]

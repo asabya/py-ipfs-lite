@@ -19,7 +19,7 @@ async def test_get_block_success():
     block = Block.from_data(b"exchange block", codec="raw")
 
     mock_network = MagicMock()
-    mock_network.send_want = AsyncMock(
+    mock_network.broadcast_want = AsyncMock(
         return_value=Message(payload=[block])
     )
 
@@ -30,8 +30,8 @@ async def test_get_block_success():
 
     assert result is not None
     assert result.data == b"exchange block"
-    mock_network.send_want.assert_called_once_with(
-        peer_info, block.cid, want_type=WantType.Block, send_dont_have=True
+    mock_network.broadcast_want.assert_called_once_with(
+        [peer_info], block.cid, want_type=WantType.Block, send_dont_have=True
     )
 
 
@@ -40,7 +40,7 @@ async def test_get_block_not_found():
     cid = Block.from_data(b"missing", codec="raw").cid
 
     mock_network = MagicMock()
-    mock_network.send_want = AsyncMock(return_value=None)
+    mock_network.broadcast_want = AsyncMock(return_value=None)
 
     exchange = BitswapExchange(mock_network)
 
@@ -50,12 +50,12 @@ async def test_get_block_not_found():
 
 
 async def test_get_block_tries_multiple_peers():
-    """get_block tries each peer until one responds."""
+    """get_block broadcasts to all peers and returns first result."""
     block = Block.from_data(b"found on second", codec="raw")
 
     mock_network = MagicMock()
-    mock_network.send_want = AsyncMock(
-        side_effect=[None, Message(payload=[block])]
+    mock_network.broadcast_want = AsyncMock(
+        return_value=Message(payload=[block])
     )
 
     exchange = BitswapExchange(mock_network)
@@ -63,8 +63,11 @@ async def test_get_block_tries_multiple_peers():
 
     result = await exchange.get_block(block.cid, peers=peers)
 
+    assert result is not None
     assert result.data == b"found on second"
-    assert mock_network.send_want.call_count == 2
+    mock_network.broadcast_want.assert_called_once_with(
+        peers, block.cid, want_type=WantType.Block, send_dont_have=True
+    )
 
 
 async def test_has_block_noop():

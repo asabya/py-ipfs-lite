@@ -19,13 +19,22 @@ class BitswapExchange(Exchange):
         self.network = network
 
     async def get_block(self, cid: CID, peers: List) -> Optional[Block]:
-        for peer_info in peers:
-            response = await self.network.send_want(
-                peer_info, cid, want_type=WantType.Block, send_dont_have=True
-            )
-            if response and response.payload:
-                return response.payload[0]
+        targets = list(peers) if peers else self.network.get_connected_peers()
+        if not targets:
+            logger.warning("No connected peers to fetch block from")
+            return None
+        response = await self.network.broadcast_want(
+            targets, cid, want_type=WantType.Block, send_dont_have=True
+        )
+        if response and response.payload:
+            return response.payload[0]
         return None
+
+    def add_wants(self, cids: list, peers: list) -> None:
+        self.network.add_wants(cids)  # peers ignored; sender uses connected peers
+
+    async def wait_for_block(self, cid: CID) -> Optional[Block]:
+        return await self.network.wait_for_block(cid)
 
     async def has_block(self, block: Block) -> None:
         pass  # Future: announce to connected peers
