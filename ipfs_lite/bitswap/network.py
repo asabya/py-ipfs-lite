@@ -289,13 +289,36 @@ class BitswapNetwork:
             for block in msg.payload:
                 cid_str = _cid_key(block.cid)
                 self._blockstore.put(block)
+                # Fire block_event for active two-phase waiters
                 block_event = self._block_events.get(cid_str)
                 logger.info(f"handle_stream: block {cid_str} event={'found' if block_event else 'NOT FOUND'}")
                 if block_event is not None:
                     block_event.set()
+                # Also fire have_event: Go may send the block directly instead of HAVE
+                # (WithWantHaveReplaceSize optimization for small blocks)
+                have_event = self._have_events.get(cid_str)
+                if have_event is not None:
+                    have_event.set()
 
             for presence in msg.block_presences:
+                cid_str = _cid_key(presence.cid)
                 logger.info(f"handle_stream: presence cid={presence.cid} type={presence.type}")
+                if presence.type == BlockPresenceType.Have:
+                    peer_id = self._peer_id_from_stream(stream)
+                    if cid_str in self._have_peers:
+                        # Active two-phase fetch: record HAVE peer and signal waiter
+                        if peer_id is not None and peer_id not in self._have_peers[cid_str]:
+                            self._have_peers[cid_str].append(peer_id)
+                        have_event = self._have_events.get(cid_str)
+                        if have_event is not None:
+                            have_event.set()
+                    elif cid_str in self._passive_cids:
+                        # Passive path (add_wants): auto-queue want-block to this peer
+                        cid = self._passive_cids[cid_str]
+                        wl = Wantlist()
+                        wl.add_entry(cid, want_type=WantType.Block, send_dont_have=True)
+                        self._queue_outbound(peer_id, Message(wantlist=wl))
+                # DONT_HAVE: no action (peer doesn't have it; we move on)
 
             # Handle wantlist requests from remote peer (Python-to-Python or
             # Go peers that use the request-response model on the same stream).

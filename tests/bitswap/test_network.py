@@ -1,13 +1,15 @@
 # tests/bitswap/test_network.py
 import pytest
+import trio
+from unittest.mock import AsyncMock, MagicMock
 from multiformats import CID, multihash
 
 from ipfs_lite.block import Block
 from ipfs_lite.blockstore.memory import MemoryBlockstore
 from ipfs_lite.bitswap.protocol import BitswapProtocol
-from ipfs_lite.bitswap.network import BitswapNetwork, encode_message, decode_message
+from ipfs_lite.bitswap.network import BitswapNetwork, encode_message, decode_message, _cid_key
 from ipfs_lite.bitswap.wantlist import Wantlist, WantType
-from ipfs_lite.bitswap.message import Message, BlockPresenceType
+from ipfs_lite.bitswap.message import Message, BlockPresence, BlockPresenceType
 
 
 class MockStream:
@@ -94,6 +96,31 @@ def test_encode_decode_wantlist():
     assert decoded.wantlist is not None
     assert len(decoded.wantlist.entries) == 1
     assert decoded.wantlist.entries[0].send_dont_have is True
+
+
+async def test_handle_stream_have_fires_have_event():
+    """handle_stream fires _have_events when HAVE presence arrives for tracked CID."""
+    bs = MemoryBlockstore()
+    protocol = BitswapProtocol(bs)
+    network = BitswapNetwork(None, protocol)
+
+    block = Block.from_data(b"have test", codec="raw")
+    cid_str = _cid_key(block.cid)
+
+    # Register as an active two-phase want
+    have_event = trio.Event()
+    network._have_events[cid_str] = have_event
+    network._have_peers[cid_str] = []
+
+    # Build inbound stream carrying a HAVE presence
+    presence_msg = Message(
+        block_presences=[BlockPresence(cid=block.cid, type=BlockPresenceType.Have)]
+    )
+    stream = MockStream(_frame(encode_message(presence_msg)))
+
+    await network.handle_stream(stream)
+
+    assert have_event.is_set()
 
 
 async def test_handle_stream_returns_block():
