@@ -165,6 +165,36 @@ async def test_handle_stream_have_fires_have_event():
     assert have_event.is_set()
 
 
+def test_wait_for_block_uses_block_events():
+    """wait_for_block resolves via _block_events when block arrives."""
+
+    async def _run():
+        bs = MemoryBlockstore()
+        block = Block.from_data(b"wait block", codec="raw")
+        cid_str = _cid_key(block.cid)
+        protocol = BitswapProtocol(bs)
+        network = BitswapNetwork(None, protocol)
+
+        # Pre-register via add_wants so block_event exists
+        network.add_wants([block.cid])
+
+        async def deliver():
+            await trio.sleep(0.05)
+            bs.put(block)
+            ev = network._block_events.get(cid_str)
+            if ev is not None:
+                ev.set()
+
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(deliver)
+            result = await network.wait_for_block(block.cid, timeout=2.0)
+
+        assert result is not None
+        assert result.data == b"wait block"
+
+    trio.run(_run)
+
+
 def test_run_sender_sends_want_have():
     """_run_sender broadcasts want-have (not want-block) to connected peers."""
 

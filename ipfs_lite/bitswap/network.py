@@ -387,6 +387,13 @@ class BitswapNetwork:
                     msg = Message(block_presences=[BlockPresence(cid=block.cid, type=BlockPresenceType.Have)])
                 self._queue_outbound(peer_id, msg)
                 del wants[cid_str]
+            # Also signal any active/passive waiters for this block
+            block_event = self._block_events.get(cid_str)
+            if block_event is not None:
+                block_event.set()
+            have_event = self._have_events.get(cid_str)
+            if have_event is not None:
+                have_event.set()
 
     # Fallback protocol IDs to try when opening outbound response streams.
     # Go's bitswap accepts both 1.1.0 and 1.2.0; try both in order.
