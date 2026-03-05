@@ -165,6 +165,50 @@ async def test_handle_stream_have_fires_have_event():
     assert have_event.is_set()
 
 
+def test_run_sender_sends_want_have():
+    """_run_sender broadcasts want-have (not want-block) to connected peers."""
+
+    async def _run():
+        bs = MemoryBlockstore()
+        block = Block.from_data(b"passive", codec="raw")
+        protocol = BitswapProtocol(bs)
+
+        written_msgs = []
+
+        async def fake_stream_write(data):
+            written_msgs.append(data)
+
+        fake_stream = MagicMock()
+        fake_stream.write = AsyncMock(side_effect=fake_stream_write)
+        fake_stream.close = AsyncMock()
+
+        host = MagicMock()
+        host.new_stream = AsyncMock(return_value=fake_stream)
+        host.get_connected_peers = MagicMock(return_value=["QmPeerA"])
+
+        network = BitswapNetwork(host, protocol)
+
+        async def stop_after_send(nursery):
+            await trio.sleep(0.1)
+            nursery.cancel_scope.cancel()
+
+        network.add_wants([block.cid])
+
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(network._run_sender)
+            nursery.start_soon(stop_after_send, nursery)
+
+        assert len(written_msgs) == 1
+        # Decode the written message
+        data = bytes(written_msgs[0])
+        _, offset = _decode_varint(data, 0)
+        msg = decode_message(data[offset:])
+        assert msg.wantlist is not None
+        assert msg.wantlist.entries[0].want_type == WantType.Have
+
+    trio.run(_run)
+
+
 async def test_handle_stream_returns_block():
     """handle_stream reads want, writes block response."""
     blockstore = MemoryBlockstore()

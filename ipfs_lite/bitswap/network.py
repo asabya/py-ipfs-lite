@@ -265,7 +265,7 @@ class BitswapNetwork:
                     stream = await self.host.new_stream(peer_info.peer_id, [self.PROTOCOL_ID])
                     wl = Wantlist()
                     for cid in batch:
-                        wl.add_entry(cid, want_type=WantType.Block, send_dont_have=True)
+                        wl.add_entry(cid, want_type=WantType.Have, send_dont_have=True)
                     await _write_msg(stream, encode_message(Message(wantlist=wl)))
                     await stream.close()
                     logger.info(f"Sent wantlist batch ({len(batch)} CIDs) to {peer_info.peer_id}")
