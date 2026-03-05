@@ -98,6 +98,48 @@ def test_encode_decode_wantlist():
     assert decoded.wantlist.entries[0].send_dont_have is True
 
 
+def test_broadcast_want_two_phase():
+    """broadcast_want sends want-have first, then want-block to HAVE peers."""
+
+    async def _run():
+        block = Block.from_data(b"two phase", codec="raw")
+        bs = MemoryBlockstore()
+        protocol = BitswapProtocol(bs)
+
+        host = MagicMock()
+        host.new_stream = AsyncMock(return_value=MockStream(b""))
+
+        network = BitswapNetwork(host, protocol)
+        cid_str = _cid_key(block.cid)
+
+        # Simulate HAVE arrival after want-have is sent, then block arrival after want-block
+        async def inject_have():
+            await trio.sleep(0.05)
+            peer_id = "QmFakePeer"
+            network._have_peers.setdefault(cid_str, []).append(peer_id)
+            ev = network._have_events.get(cid_str)
+            if ev is not None:
+                ev.set()
+            # Inject block after want-block would be sent
+            await trio.sleep(0.05)
+            bs.put(block)
+            bev = network._block_events.get(cid_str)
+            if bev is not None:
+                bev.set()
+
+        peer_info = MagicMock()
+        peer_info.peer_id = "QmFakePeer"
+
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(inject_have)
+            result = await network.broadcast_want([peer_info], block.cid)
+
+        assert result is not None
+        assert result.payload[0].data == b"two phase"
+
+    trio.run(_run)
+
+
 async def test_handle_stream_have_fires_have_event():
     """handle_stream fires _have_events when HAVE presence arrives for tracked CID."""
     bs = MemoryBlockstore()
