@@ -54,6 +54,21 @@ def _frame(data: bytes) -> bytes:
     return _encode_varint(len(data)) + data
 
 
+def test_network_has_two_phase_state():
+    """BitswapNetwork exposes new per-CID tracking dicts."""
+    from ipfs_lite.blockstore.memory import MemoryBlockstore
+    from ipfs_lite.bitswap.protocol import BitswapProtocol
+    bs = MemoryBlockstore()
+    protocol = BitswapProtocol(bs)
+    network = BitswapNetwork(None, protocol)
+    assert hasattr(network, '_have_events')
+    assert hasattr(network, '_have_peers')
+    assert hasattr(network, '_block_events')
+    assert hasattr(network, '_passive_cids')
+    assert not hasattr(network, '_pending_wants')
+    assert not hasattr(network, 'send_want')
+
+
 def test_encode_decode_roundtrip():
     """Encode a Message to protobuf bytes and decode it back."""
     block = Block.from_data(b"round trip", codec="raw")

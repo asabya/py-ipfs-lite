@@ -62,7 +62,7 @@ def _cid_prefix(cid: CID) -> bytes:
     digest_bytes = cid.digest  # raw multihash bytes
     pos = 0
     mh_code, pos = _decode_varint(digest_bytes, pos)
-    mh_len, _pos = _decode_varint(digest_bytes, pos)
+    mh_len, _ = _decode_varint(digest_bytes, pos)
     return (
         _encode_varint(cid.version)
         + _encode_varint(cid.codec.code)
@@ -85,7 +85,7 @@ def _block_from_proto(pb_block) -> Block:
     version, pos = _decode_varint(prefix, pos)
     codec_code, pos = _decode_varint(prefix, pos)
     mh_code, pos = _decode_varint(prefix, pos)
-    _mh_len, pos = _decode_varint(prefix, pos)
+    _, pos = _decode_varint(prefix, pos)
 
     # Look up codec and hash names by their numeric codes
     codec_name = mc._code_table[codec_code].name
@@ -202,41 +202,48 @@ class BitswapNetwork:
         self.host = host
         self.protocol = protocol
         self._blockstore = protocol.blockstore
-        # Maps CID string -> trio.Event; set when that block arrives via handle_stream
-        self._pending_wants: dict[str, trio.Event] = {}
+        # Per-CID two-phase state (active fetch via broadcast_want)
+        self._have_events: dict[str, trio.Event] = {}   # fired on first HAVE or direct block
+        self._have_peers: dict[str, list] = {}          # peer_ids that replied HAVE
+        self._block_events: dict[str, trio.Event] = {}  # fired when block stored locally
+        # Passive want path (add_wants → _run_sender)
+        self._passive_cids: dict[str, CID] = {}         # cid_str → CID for add_wants
         self._want_queue: list = []
         self._want_ready = trio.Event()
+        # Server ledger: which peers want which blocks (server role)
+        self._peer_wants: dict[str, dict[str, Any]] = {}
+        # Outbound delivery queue (blocks/presences → peers, AND want-block requests for passive path)
+        self._outbound_queue: list = []
+        self._outbound_ready = trio.Event()
 
     def add_wants(self, cids: list) -> None:
-        """Queue CIDs for the background sender. Register events immediately."""
+        """Queue CIDs for background want-have sender. Registers passive tracking."""
         for cid in cids:
             cid_str = _cid_key(cid)
-            if not self._blockstore.get(cid) and cid_str not in self._pending_wants:
-                self._pending_wants[cid_str] = trio.Event()
+            if not self._blockstore.get(cid) and cid_str not in self._passive_cids:
+                self._passive_cids[cid_str] = cid
+                if cid_str not in self._block_events:
+                    self._block_events[cid_str] = trio.Event()
                 self._want_queue.append(cid)
         self._want_ready.set()
 
     async def wait_for_block(self, cid: CID, timeout: float = 300.0) -> Optional[Block]:
-        """Wait for a block whose want was queued via add_wants(). No stream opened."""
+        """Wait until the block for cid is stored locally (registered via add_wants)."""
         cid_str = _cid_key(cid)
+        block = self._blockstore.get(cid)
+        if block:
+            return block
+        event = self._block_events.get(cid_str)
+        if event is None:
+            logger.warning(f"wait_for_block: no block_event registered for {cid_str}")
+            return self._blockstore.get(cid)
         try:
-            block = self._blockstore.get(cid)
-            if block:
-                return block
-            event = self._pending_wants.get(cid_str)
-            if event is None:
-                logger.warning(f"wait_for_block: no event registered for {cid_str}")
-                return self._blockstore.get(cid)
-            logger.info(f"wait_for_block: waiting for {cid_str}")
-            with trio.move_on_after(timeout) as cs:
+            with trio.move_on_after(timeout):
                 await event.wait()
-            if cs.cancelled_caught:
-                logger.error(f"wait_for_block: TIMED OUT for {cid_str}")
-            else:
-                logger.info(f"wait_for_block: event fired for {cid_str}")
             return self._blockstore.get(cid)
         finally:
-            self._pending_wants.pop(cid_str, None)
+            self._block_events.pop(cid_str, None)
+            self._passive_cids.pop(cid_str, None)
 
     async def _run_sender(self) -> None:
         """Background loop: batch-flush accumulated wants to connected peers."""
@@ -278,14 +285,14 @@ class BitswapNetwork:
             )
 
             # Go IPFS pushes blocks by opening a new stream; store them and
-            # notify any send_want callers that are waiting.
+            # notify any waiters.
             for block in msg.payload:
                 cid_str = _cid_key(block.cid)
                 self._blockstore.put(block)
-                event = self._pending_wants.get(cid_str)
-                logger.info(f"handle_stream: block {cid_str} event={'found' if event else 'NOT FOUND'}")
-                if event is not None:
-                    event.set()
+                block_event = self._block_events.get(cid_str)
+                logger.info(f"handle_stream: block {cid_str} event={'found' if block_event else 'NOT FOUND'}")
+                if block_event is not None:
+                    block_event.set()
 
             for presence in msg.block_presences:
                 logger.info(f"handle_stream: presence cid={presence.cid} type={presence.type}")
@@ -293,148 +300,180 @@ class BitswapNetwork:
             # Handle wantlist requests from remote peer (Python-to-Python or
             # Go peers that use the request-response model on the same stream).
             if msg.wantlist is not None and msg.wantlist.entries:
+                peer_id = self._peer_id_from_stream(stream)
+                peer_id_str = str(peer_id)
                 response = await self.protocol.handle_message(msg)
-                if response is not None:
-                    await _write_msg(stream, encode_message(response))
+                # 2. Update peer ledger + queue outbound response (Go compat)
+                # Do this BEFORE the same-stream write so a failed write (e.g.
+                # Go already closed its read end) doesn't prevent block delivery.
+                if peer_id is not None:
+                    self._update_peer_ledger(peer_id_str, peer_id, msg.wantlist)
+                    if response is not None:
+                        self._queue_outbound(peer_id, response)
+                # 1. Same-stream response (Python-to-Python compat only).
+                # Go peers close their read end immediately after sending a wantlist,
+                # so this write will fail for Go peers. That is expected — blocks are
+                # delivered via _run_response_sender (path 2 above) instead.
+                if response is not None and (response.payload or response.block_presences):
+                    try:
+                        await _write_msg(stream, encode_message(response))
+                        logger.debug("Same-stream write succeeded (Python-to-Python peer)")
+                    except Exception as e:
+                        logger.debug(f"Same-stream write failed (Go peer, expected): {e}")
         except Exception as e:
             logger.error(f"Bitswap stream error: {e}", exc_info=True)
         finally:
             await stream.close()
 
-    async def send_want(
-        self,
-        peer_info: Any,
-        cid: CID,
-        want_type: WantType = WantType.Block,
-        send_dont_have: bool = True,
-    ) -> Optional[Message]:
-        """Send a wantlist to peer and return a Message with the result.
-
-        Handles two response models:
-        1. Same-stream response (Python-to-Python, some Go implementations).
-        2. Go's push model: Go opens a new inbound stream to deliver blocks;
-           handle_stream stores them and signals the pending event.
-        """
-        cid_str = _cid_key(cid)
-        event = trio.Event()
-        self._pending_wants[cid_str] = event
-
+    def _peer_id_from_stream(self, stream) -> Any:
+        """Extract the remote PeerID from an inbound stream, or None if unavailable."""
         try:
-            stream = await self.host.new_stream(peer_info.peer_id, [self.PROTOCOL_ID])
-        except Exception as e:
-            logger.error(f"Failed to open stream to {peer_info.peer_id}: {e}")
-            self._pending_wants.pop(cid_str, None)
+            return stream.muxed_conn.peer_id
+        except AttributeError:
             return None
 
-        try:
-            wl = Wantlist()
-            wl.add_entry(cid, want_type=want_type, send_dont_have=send_dont_have)
-            msg = Message(wantlist=wl)
-            await _write_msg(stream, encode_message(msg))
+    def _queue_outbound(self, peer_id: Any, msg: Message) -> None:
+        if msg.payload or msg.block_presences:
+            self._outbound_queue.append((peer_id, msg))
+            self._outbound_ready.set()
 
-            # --- Try same-stream response (request-response model) ---
+    def _update_peer_ledger(self, peer_id_str: str, peer_id: Any, wantlist: Wantlist) -> None:
+        """Track unfulfilled wants so notify_new_blocks can push later."""
+        if peer_id_str not in self._peer_wants:
+            self._peer_wants[peer_id_str] = {"__peer_id__": peer_id}
+        wants = self._peer_wants[peer_id_str]
+        for entry in wantlist.entries:
+            cid_str = _cid_key(entry.cid)
+            if entry.cancel:
+                wants.pop(cid_str, None)
+            elif not self._blockstore.get(entry.cid):
+                wants[cid_str] = entry  # block not available yet; remember for later
+
+    def notify_new_blocks(self, blocks: list) -> None:
+        """Called when new blocks are stored locally. Push to any peers waiting for them."""
+        for block in blocks:
+            cid_str = _cid_key(block.cid)
+            for _, wants in list(self._peer_wants.items()):
+                entry = wants.get(cid_str)
+                if entry is None:
+                    continue
+                peer_id = wants.get("__peer_id__")
+                if entry.want_type == WantType.Block:
+                    msg = Message(payload=[block])
+                else:
+                    msg = Message(block_presences=[BlockPresence(cid=block.cid, type=BlockPresenceType.Have)])
+                self._queue_outbound(peer_id, msg)
+                del wants[cid_str]
+
+    # Fallback protocol IDs to try when opening outbound response streams.
+    # Go's bitswap accepts both 1.1.0 and 1.2.0; try both in order.
+    _RESPONSE_PROTOCOLS = [
+        "/ipfs/bitswap/1.2.0",
+        "/ipfs/bitswap/1.1.0",
+        "/ipfs/bitswap/1.0.0",
+    ]
+
+    async def _send_response(self, peer_id: Any, msg: Message) -> None:
+        """Open a new outbound stream to peer_id and deliver msg (blocks/presences)."""
+        encoded = encode_message(msg)
+        for proto in self._RESPONSE_PROTOCOLS:
             try:
-                with trio.move_on_after(2.0):
-                    data = await _read_msg(stream)
-                    response = decode_message(data)
-                    # Store any blocks that arrived on this stream too
-                    for block in response.payload:
-                        self._blockstore.put(block)
-                        ev = self._pending_wants.get(_cid_key(block.cid))
-                        if ev is not None:
-                            ev.set()
-                    if response.payload or response.block_presences:
-                        return response
-            except Exception:
-                pass  # Stream closed or framing error; fall through to push model
+                stream = await self.host.new_stream(peer_id, [proto])
+                await _write_msg(stream, encoded)
+                await stream.close()
+                logger.info(
+                    f"Sent {len(msg.payload)} blocks, {len(msg.block_presences)}"
+                    f" presences to {peer_id} via {proto}"
+                )
+                return
+            except Exception as e:
+                logger.debug(f"Failed via {proto} to {peer_id}: {e}")
+        logger.error(f"All protocols failed delivering response to {peer_id}")
 
-            # --- Check if block already arrived via handle_stream ---
-            block = self._blockstore.get(cid)
-            if block:
-                return Message(payload=[block])
-
-            # --- Wait for Go's push model (new inbound stream) ---
-            with trio.move_on_after(self._PUSH_TIMEOUT):
-                await event.wait()
-
-            block = self._blockstore.get(cid)
-            if block:
-                return Message(payload=[block])
-
-            logger.error(f"Bitswap send_want error: Block not found for {cid_str}")
-            return None
-        finally:
-            self._pending_wants.pop(cid_str, None)
-            await stream.close()
+    async def _run_outbound_sender(self) -> None:
+        """Background loop: open new outbound streams to deliver blocks to requesting peers."""
+        while True:
+            await self._outbound_ready.wait()
+            await trio.sleep(0)  # yield so multiple responses can accumulate
+            batch = self._outbound_queue[:]
+            self._outbound_queue.clear()
+            self._outbound_ready = trio.Event()
+            async with trio.open_nursery() as nursery:
+                for peer_id, msg in batch:
+                    nursery.start_soon(self._send_response, peer_id, msg)
 
     def get_connected_peers(self) -> List[LP2PPeerInfo]:
         """Return PeerInfo for every peer with an active connection."""
         return [LP2PPeerInfo(pid, []) for pid in self.host.get_connected_peers()]
 
+    async def _send_wantlist(self, peer_id: Any, cid: CID, want_type: WantType) -> None:
+        """Open a new stream to peer_id, send a single-entry wantlist, close stream."""
+        try:
+            stream = await self.host.new_stream(peer_id, [self.PROTOCOL_ID])
+            wl = Wantlist()
+            wl.add_entry(cid, want_type=want_type, send_dont_have=True)
+            await _write_msg(stream, encode_message(Message(wantlist=wl)))
+            await stream.close()
+            logger.debug(f"Sent {want_type.name} for {_cid_key(cid)} to {peer_id}")
+        except Exception as e:
+            logger.error(f"Failed to send {want_type.name} to {peer_id}: {e}")
+
+    _HAVE_TIMEOUT = 1.5   # seconds to wait for HAVE responses (Phase 1)
+
     async def broadcast_want(
         self,
         peers: List[Any],
         cid: CID,
-        want_type: WantType = WantType.Block,
-        send_dont_have: bool = True,
     ) -> Optional[Message]:
-        """Send a wantlist to all peers concurrently and return the first block received."""
+        """Two-phase block fetch: send want-have to discover peers, then want-block to HAVE peers."""
         cid_str = _cid_key(cid)
-        event = trio.Event()
-        self._pending_wants[cid_str] = event
+
+        block = self._blockstore.get(cid)
+        if block:
+            return Message(payload=[block])
+
+        have_event = trio.Event()
+        block_event = trio.Event()
+        self._have_events[cid_str] = have_event
+        self._have_peers[cid_str] = []
+        self._block_events[cid_str] = block_event
 
         try:
-            async def try_peer(peer_info, cancel_scope):
-                try:
-                    stream = await self.host.new_stream(peer_info.peer_id, [self.PROTOCOL_ID])
-                except Exception as e:
-                    logger.error(f"Failed to open stream to {peer_info.peer_id}: {e}")
-                    return
-                try:
-                    wl = Wantlist()
-                    wl.add_entry(cid, want_type=want_type, send_dont_have=send_dont_have)
-                    msg_out = Message(wantlist=wl)
-                    await _write_msg(stream, encode_message(msg_out))
+            # Phase 1: send want-have to all peers (fire-and-forget)
+            async with trio.open_nursery() as nursery:
+                for peer_info in peers:
+                    nursery.start_soon(self._send_wantlist, peer_info.peer_id, cid, WantType.Have)
 
-                    try:
-                        with trio.move_on_after(2.0):
-                            data = await _read_msg(stream)
-                            response = decode_message(data)
-                            for block in response.payload:
-                                self._blockstore.put(block)
-                                ev = self._pending_wants.get(_cid_key(block.cid))
-                                if ev is not None:
-                                    ev.set()
-                            if response.payload or response.block_presences:
-                                cancel_scope.cancel()
-                                return
-                    except Exception:
-                        pass
-                finally:
-                    await stream.close()
+            # Wait for first HAVE (or a direct block from Go's small-block shortcut)
+            with trio.move_on_after(self._HAVE_TIMEOUT):
+                await have_event.wait()
 
-            async def wait_for_push(cancel_scope):
-                block = self._blockstore.get(cid)
-                if block:
-                    cancel_scope.cancel()
-                    return
-                with trio.move_on_after(self._PUSH_TIMEOUT):
-                    await event.wait()
-                block = self._blockstore.get(cid)
-                if block:
-                    cancel_scope.cancel()
+            # Check for direct block arrival (Go sends block instead of HAVE for small blocks)
+            block = self._blockstore.get(cid)
+            if block:
+                return Message(payload=[block])
 
-            with trio.CancelScope() as cancel_scope:
-                async with trio.open_nursery() as nursery:
-                    for peer_info in peers:
-                        nursery.start_soon(try_peer, peer_info, cancel_scope)
-                    nursery.start_soon(wait_for_push, cancel_scope)
+            have_peers = self._have_peers.get(cid_str, [])
+            if not have_peers:
+                logger.warning(f"broadcast_want: no peers reported HAVE for {cid_str}")
+                return None
+
+            # Phase 2: send want-block to peers that responded with HAVE
+            async with trio.open_nursery() as nursery:
+                for peer_id in have_peers:
+                    nursery.start_soon(self._send_wantlist, peer_id, cid, WantType.Block)
+
+            # Wait for block (peer opens new inbound stream → handle_stream fires block_event)
+            with trio.move_on_after(self._PUSH_TIMEOUT):
+                await block_event.wait()
 
             block = self._blockstore.get(cid)
             if block:
                 return Message(payload=[block])
 
-            logger.error(f"Bitswap broadcast_want: Block not found for {cid_str}")
+            logger.error(f"broadcast_want: block not received after two-phase for {cid_str}")
             return None
         finally:
-            self._pending_wants.pop(cid_str, None)
+            self._have_events.pop(cid_str, None)
+            self._have_peers.pop(cid_str, None)
+            self._block_events.pop(cid_str, None)

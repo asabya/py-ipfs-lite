@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from ipfs_lite.blockstore.interface import Blockstore
 from ipfs_lite.block_service import BlockService
-from ipfs_lite.bitswap.protocol import BitswapProtocol
+from ipfs_lite.bitswap.protocol import BitswapProtocol, BITSWAP_PROTOCOL_IDS
 from ipfs_lite.bitswap.network import BitswapNetwork
 from ipfs_lite.exchange.bitswap import BitswapExchange
 from ipfs_lite.dag.service import DAGService
@@ -31,12 +31,11 @@ class IPFSLitePeer:
 
     async def start(self, nursery=None) -> None:
         """Register Bitswap protocol handler and start background want-sender."""
-        self.host.set_stream_handler(
-            BitswapNetwork.PROTOCOL_ID,
-            self.network.handle_stream,
-        )
+        for proto in BITSWAP_PROTOCOL_IDS:
+            self.host.set_stream_handler(proto, self.network.handle_stream)
         if nursery is not None:
             nursery.start_soon(self.network._run_sender)
+            nursery.start_soon(self.network._run_outbound_sender)
         logger.info(f"IPFSLitePeer started: {self.peer_id}")
 
     async def connect(self, peer_info: Any) -> None:
