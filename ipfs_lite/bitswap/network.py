@@ -291,7 +291,7 @@ class BitswapNetwork:
                 self._blockstore.put(block)
                 # Fire block_event for active two-phase waiters
                 block_event = self._block_events.get(cid_str)
-                logger.info(f"handle_stream: block {cid_str} event={'found' if block_event else 'NOT FOUND'}")
+                logger.info(f"handle_stream: block {cid_str} event={'found' if block_event is not None else 'NOT FOUND'}")
                 if block_event is not None:
                     block_event.set()
                 # Also fire have_event: Go may send the block directly instead of HAVE

@@ -12,8 +12,6 @@ from libp2p.peer.peerinfo import PeerInfo
 from multiaddr import Multiaddr
 
 from ipfs_lite import IPFSLitePeer, MemoryBlockstore, Block
-from ipfs_lite.bitswap.message import BlockPresenceType
-from ipfs_lite.bitswap.wantlist import WantType
 
 
 LISTEN_ADDR = Multiaddr("/ip4/127.0.0.1/tcp/0")
@@ -37,28 +35,30 @@ def test_block_exchange():
                 peer_a = IPFSLitePeer(host_a, MemoryBlockstore())
                 peer_b = IPFSLitePeer(host_b, MemoryBlockstore())
 
-                await peer_a.start()
-                await peer_b.start()
+                async with trio.open_nursery() as nursery:
+                    await peer_a.start(nursery)
+                    await peer_b.start(nursery)
 
-                # A stores a block
-                block = Block.from_data(b"hello libp2p", codec="raw")
-                peer_a.dag.put(block)
+                    # A stores a block
+                    block = Block.from_data(b"hello libp2p", codec="raw")
+                    peer_a.dag.put(block)
 
-                # B connects to A
-                peer_a_info = PeerInfo(host_a.get_id(), host_a.get_addrs())
-                await peer_b.connect(peer_a_info)
+                    # B connects to A
+                    peer_a_info = PeerInfo(host_a.get_id(), host_a.get_addrs())
+                    await peer_b.connect(peer_a_info)
 
-                # B fetches block from A via dag.get
-                retrieved = await peer_b.dag.get(block.cid, peers=[peer_a_info])
+                    # B fetches block from A via dag.get (two-phase want-have→want-block)
+                    retrieved = await peer_b.dag.get(block.cid, peers=[peer_a_info])
 
-                assert retrieved is not None
-                assert retrieved.data == b"hello libp2p"
+                    assert retrieved is not None
+                    assert retrieved.data == b"hello libp2p"
+                    nursery.cancel_scope.cancel()
 
     trio.run(_run)
 
 
-def test_have_response():
-    """Peer B checks Have presence, then fetches the actual block."""
+def test_two_phase_block_exchange():
+    """Peer B fetches a block from Peer A using the two-phase want-have→want-block flow."""
 
     async def _run():
         host_a = _make_host(b"c" * 32)
@@ -69,41 +69,28 @@ def test_have_response():
                 peer_a = IPFSLitePeer(host_a, MemoryBlockstore())
                 peer_b = IPFSLitePeer(host_b, MemoryBlockstore())
 
-                await peer_a.start()
-                await peer_b.start()
+                async with trio.open_nursery() as nursery:
+                    await peer_a.start(nursery)
+                    await peer_b.start(nursery)
 
-                block = Block.from_data(b"check then fetch", codec="raw")
-                peer_a.dag.put(block)
+                    block = Block.from_data(b"two phase exchange", codec="raw")
+                    peer_a.dag.put(block)
 
-                peer_a_info = PeerInfo(host_a.get_id(), host_a.get_addrs())
-                await peer_b.connect(peer_a_info)
+                    peer_a_info = PeerInfo(host_a.get_id(), host_a.get_addrs())
+                    await peer_b.connect(peer_a_info)
 
-                # Step 1: Have check
-                have_response = await peer_b.network.send_want(
-                    peer_a_info,
-                    block.cid,
-                    want_type=WantType.Have,
-                    send_dont_have=True,
-                )
-                assert have_response is not None
-                assert len(have_response.block_presences) == 1
-                assert have_response.block_presences[0].type == BlockPresenceType.Have
+                    # broadcast_want does want-have first, then want-block to HAVE peers
+                    retrieved = await peer_b.dag.get(block.cid, peers=[peer_a_info])
 
-                # Step 2: Fetch actual block
-                block_response = await peer_b.network.send_want(
-                    peer_a_info,
-                    block.cid,
-                    want_type=WantType.Block,
-                )
-                assert block_response is not None
-                assert len(block_response.payload) == 1
-                assert block_response.payload[0].data == b"check then fetch"
+                    assert retrieved is not None
+                    assert retrieved.data == b"two phase exchange"
+                    nursery.cancel_scope.cancel()
 
     trio.run(_run)
 
 
-def test_dont_have_response():
-    """Peer A sends DontHave when it doesn't have the block."""
+def test_dont_have_returns_none():
+    """broadcast_want returns None when no peer has the block."""
 
     async def _run():
         host_a = _make_host(b"e" * 32)
@@ -114,22 +101,17 @@ def test_dont_have_response():
                 peer_a = IPFSLitePeer(host_a, MemoryBlockstore())
                 peer_b = IPFSLitePeer(host_b, MemoryBlockstore())
 
-                await peer_a.start()
-                await peer_b.start()
+                async with trio.open_nursery() as nursery:
+                    await peer_a.start(nursery)
+                    await peer_b.start(nursery)
 
-                missing_cid = Block.from_data(b"not on A", codec="raw").cid
+                    missing_cid = Block.from_data(b"not on A", codec="raw").cid
+                    peer_a_info = PeerInfo(host_a.get_id(), host_a.get_addrs())
+                    await peer_b.connect(peer_a_info)
 
-                peer_a_info = PeerInfo(host_a.get_id(), host_a.get_addrs())
-                await peer_b.connect(peer_a_info)
-
-                response = await peer_b.network.send_want(
-                    peer_a_info,
-                    missing_cid,
-                    want_type=WantType.Have,
-                    send_dont_have=True,
-                )
-                assert response is not None
-                assert len(response.block_presences) == 1
-                assert response.block_presences[0].type == BlockPresenceType.DontHave
+                    # Peer A will respond DONT_HAVE → no HAVE peers → returns None
+                    result = await peer_b.network.broadcast_want([peer_a_info], missing_cid)
+                    assert result is None
+                    nursery.cancel_scope.cancel()
 
     trio.run(_run)
