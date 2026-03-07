@@ -12,6 +12,12 @@ from ipfs_lite.bitswap.wantlist import Wantlist, WantType
 logger = logging.getLogger(__name__)
 
 BITSWAP_PROTOCOL_ID = "/ipfs/bitswap/1.1.0"
+BITSWAP_PROTOCOL_IDS = [
+    "/ipfs/bitswap/1.2.0",
+    "/ipfs/bitswap/1.1.0",
+    "/ipfs/bitswap/1.0.0",
+    "/ipfs/bitswap",
+]
 
 
 class BitswapProtocol:
