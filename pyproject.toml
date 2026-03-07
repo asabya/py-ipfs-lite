@@ -8,7 +8,7 @@ dependencies = [
     "multiformats>=0.3.0",
     "cbor2>=5.0.0",
     "protobuf>=4.0.0",
-    "libp2p>=0.2.0",
+    "libp2p @ git+https://github.com/asabya/py-libp2p.git@main",
 ]
 
 [tool.pytest.ini_options]

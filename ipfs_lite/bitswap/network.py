@@ -273,76 +273,62 @@ class BitswapNetwork:
                     logger.error(f"Failed to send batch wantlist to {peer_info.peer_id}: {e}")
 
     async def handle_stream(self, stream) -> None:
-        """Inbound stream handler — registered with libp2p host."""
+        """Inbound stream handler — registered with libp2p host.
+
+        Reads messages in a loop (like Go's handleNewStream) until EOF or error.
+        Go's bitswap reuses streams for multiple messages (e.g., want-have followed
+        by want-block on the same stream).
+        """
         try:
-            data = await _read_msg(stream)
-            msg = decode_message(data)
+            while True:
+                try:
+                    data = await _read_msg(stream)
+                except EOFError:
+                    break
+                msg = decode_message(data)
 
-            logger.info(
-                f"handle_stream: blocks={len(msg.payload)}"
-                f" presences={len(msg.block_presences)}"
-                f" wantlist_entries={len(msg.wantlist.entries) if msg.wantlist else 0}"
-            )
+                logger.info(
+                    f"handle_stream: blocks={len(msg.payload)}"
+                    f" presences={len(msg.block_presences)}"
+                    f" wantlist_entries={len(msg.wantlist.entries) if msg.wantlist else 0}"
+                )
 
-            # Go IPFS pushes blocks by opening a new stream; store them and
-            # notify any waiters.
-            for block in msg.payload:
-                cid_str = _cid_key(block.cid)
-                self._blockstore.put(block)
-                # Fire block_event for active two-phase waiters
-                block_event = self._block_events.get(cid_str)
-                logger.info(f"handle_stream: block {cid_str} event={'found' if block_event is not None else 'NOT FOUND'}")
-                if block_event is not None:
-                    block_event.set()
-                # Also fire have_event: Go may send the block directly instead of HAVE
-                # (WithWantHaveReplaceSize optimization for small blocks)
-                have_event = self._have_events.get(cid_str)
-                if have_event is not None:
-                    have_event.set()
+                for block in msg.payload:
+                    cid_str = _cid_key(block.cid)
+                    self._blockstore.put(block)
+                    block_event = self._block_events.get(cid_str)
+                    logger.info(f"handle_stream: block {cid_str} event={'found' if block_event is not None else 'NOT FOUND'}")
+                    if block_event is not None:
+                        block_event.set()
+                    have_event = self._have_events.get(cid_str)
+                    if have_event is not None:
+                        have_event.set()
 
-            for presence in msg.block_presences:
-                cid_str = _cid_key(presence.cid)
-                logger.info(f"handle_stream: presence cid={presence.cid} type={presence.type}")
-                if presence.type == BlockPresenceType.Have:
+                for presence in msg.block_presences:
+                    cid_str = _cid_key(presence.cid)
+                    logger.info(f"handle_stream: presence cid={presence.cid} type={presence.type}")
+                    if presence.type == BlockPresenceType.Have:
+                        peer_id = self._peer_id_from_stream(stream)
+                        if cid_str in self._have_peers:
+                            if peer_id is not None and peer_id not in self._have_peers[cid_str]:
+                                self._have_peers[cid_str].append(peer_id)
+                            have_event = self._have_events.get(cid_str)
+                            if have_event is not None:
+                                have_event.set()
+                        elif cid_str in self._passive_cids:
+                            cid = self._passive_cids[cid_str]
+                            wl = Wantlist()
+                            wl.add_entry(cid, want_type=WantType.Block, send_dont_have=True)
+                            self._queue_outbound(peer_id, Message(wantlist=wl))
+
+                if msg.wantlist is not None and msg.wantlist.entries:
                     peer_id = self._peer_id_from_stream(stream)
-                    if cid_str in self._have_peers:
-                        # Active two-phase fetch: record HAVE peer and signal waiter
-                        if peer_id is not None and peer_id not in self._have_peers[cid_str]:
-                            self._have_peers[cid_str].append(peer_id)
-                        have_event = self._have_events.get(cid_str)
-                        if have_event is not None:
-                            have_event.set()
-                    elif cid_str in self._passive_cids:
-                        # Passive path (add_wants): auto-queue want-block to this peer
-                        cid = self._passive_cids[cid_str]
-                        wl = Wantlist()
-                        wl.add_entry(cid, want_type=WantType.Block, send_dont_have=True)
-                        self._queue_outbound(peer_id, Message(wantlist=wl))
-                # DONT_HAVE: no action (peer doesn't have it; we move on)
-
-            # Handle wantlist requests from remote peer (Python-to-Python or
-            # Go peers that use the request-response model on the same stream).
-            if msg.wantlist is not None and msg.wantlist.entries:
-                peer_id = self._peer_id_from_stream(stream)
-                peer_id_str = str(peer_id)
-                response = await self.protocol.handle_message(msg)
-                # 2. Update peer ledger + queue outbound response (Go compat)
-                # Do this BEFORE the same-stream write so a failed write (e.g.
-                # Go already closed its read end) doesn't prevent block delivery.
-                if peer_id is not None:
-                    self._update_peer_ledger(peer_id_str, peer_id, msg.wantlist)
-                    if response is not None:
-                        self._queue_outbound(peer_id, response)
-                # 1. Same-stream response (Python-to-Python compat only).
-                # Go peers close their read end immediately after sending a wantlist,
-                # so this write will fail for Go peers. That is expected — blocks are
-                # delivered via _run_response_sender (path 2 above) instead.
-                if response is not None and (response.payload or response.block_presences):
-                    try:
-                        await _write_msg(stream, encode_message(response))
-                        logger.debug("Same-stream write succeeded (Python-to-Python peer)")
-                    except Exception as e:
-                        logger.debug(f"Same-stream write failed (Go peer, expected): {e}")
+                    peer_id_str = str(peer_id)
+                    response = await self.protocol.handle_message(msg)
+                    if peer_id is not None:
+                        self._update_peer_ledger(peer_id_str, peer_id, msg.wantlist)
+                        if response is not None:
+                            self._queue_outbound(peer_id, response)
         except Exception as e:
             logger.error(f"Bitswap stream error: {e}", exc_info=True)
         finally:
@@ -408,8 +394,11 @@ class BitswapNetwork:
         encoded = encode_message(msg)
         for proto in self._RESPONSE_PROTOCOLS:
             try:
+                logger.debug(f"_send_response: opening stream to {peer_id} via {proto}")
                 stream = await self.host.new_stream(peer_id, [proto])
+                logger.debug(f"_send_response: stream opened, writing {len(encoded)} bytes")
                 await _write_msg(stream, encoded)
+                logger.debug(f"_send_response: write done, closing stream")
                 await stream.close()
                 logger.info(
                     f"Sent {len(msg.payload)} blocks, {len(msg.block_presences)}"
@@ -417,7 +406,7 @@ class BitswapNetwork:
                 )
                 return
             except Exception as e:
-                logger.debug(f"Failed via {proto} to {peer_id}: {e}")
+                logger.warning(f"Failed via {proto} to {peer_id}: {e}", exc_info=True)
         logger.error(f"All protocols failed delivering response to {peer_id}")
 
     async def _run_outbound_sender(self) -> None:

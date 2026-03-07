@@ -879,7 +879,7 @@ wheels = [
 [[package]]
 name = "libp2p"
 version = "0.6.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/asabya/py-libp2p.git?rev=main#b3ec1bd1a28856bf63ac992e9fbc3ba6dd060d6a" }
 dependencies = [
     { name = "aioquic" },
     { name = "base58" },
@@ -894,6 +894,7 @@ dependencies = [
     { name = "mypy-protobuf" },
     { name = "noiseprotocol" },
     { name = "protobuf" },
+    { name = "py-cid" },
     { name = "py-multibase" },
     { name = "py-multicodec" },
     { name = "py-multihash" },
@@ -906,10 +907,6 @@ dependencies = [
     { name = "trio-websocket" },
     { name = "types-requests" },
     { name = "zeroconf" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/98/b7/3d6a5eb9f1788da09371ee1be08768b72fdcd956cee0f3f92a8ef1819862/libp2p-0.6.0.tar.gz", hash = "sha256:36c5f409e08b3b4058e0fa0d2a29da5f007eaa44bbcb8d21c96adfc554470f29", size = 1098852 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/c2/3d29ee22e7f0315ef0f8e20ad8edbaf931cb33d2d2e66c0d4fd37022c681/libp2p-0.6.0-py3-none-any.whl", hash = "sha256:1f1248d8553081b636022c5b5d5453ff71cf40d5dd31f19d0c56aa1e49edc678", size = 788124 },
 ]
 
 [[package]]
@@ -1361,7 +1358,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cbor2", specifier = ">=5.0.0" },
-    { name = "libp2p", specifier = ">=0.2.0" },
+    { name = "libp2p", git = "https://github.com/asabya/py-libp2p.git?rev=main" },
     { name = "multiformats", specifier = ">=0.3.0" },
     { name = "protobuf", specifier = ">=4.0.0" },
 ]
