@@ -5,9 +5,17 @@ import anyio
 from multiformats import CID
 
 from ipfs_lite.block import Block
-from ipfs_lite.dag.codecs import decode_dag_pb_all, decode_unixfs_data
+from ipfs_lite.dag.codecs import (
+    decode_dag_pb_all,
+    decode_unixfs_data,
+    encode_dag_pb,
+    encode_unixfs_file,
+    encode_unixfs_internal,
+)
 from ipfs_lite.dag.service import DAGService
 from ipfs_lite.unixfs.chunker import Chunker
+
+DEFAULT_MAX_LINKS = 174
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +27,76 @@ class UnixFSFile:
         self.dag = dag
         self.chunker = Chunker(chunk_size)
 
-    def add_file(self, reader: io.BytesIO) -> CID:
-        """Add a file synchronously and return root CID."""
-        data = reader.read()
-        block = Block.from_data(data, codec="raw")
-        self.dag.put(block)
-        return block.cid
+    def add_file(self, reader: io.IOBase) -> CID:
+        """Add a file and return root CID.
+
+        Uses balanced DAG layout with UnixFS/dag-pb wrapping,
+        matching Go's AddFile with RawLeaves=false.
+        """
+        chunks = list(self.chunker.chunk(reader))
+
+        if len(chunks) == 0:
+            # Empty file
+            unixfs_bytes = encode_unixfs_file(b"")
+            dag_pb_bytes = encode_dag_pb(unixfs_bytes)
+            block = Block.from_data(dag_pb_bytes, codec="dag-pb")
+            self.dag.put(block)
+            return block.cid
+
+        # Build leaf blocks
+        leaves = []
+        for chunk in chunks:
+            unixfs_bytes = encode_unixfs_file(chunk)
+            dag_pb_bytes = encode_dag_pb(unixfs_bytes)
+            block = Block.from_data(dag_pb_bytes, codec="dag-pb")
+            self.dag.put(block)
+            leaves.append((block, len(chunk)))
+
+        if len(leaves) == 1:
+            return leaves[0][0].cid
+
+        return self._balanced_layout(leaves)
+
+    def _balanced_layout(self, leaves: list[tuple[Block, int]]) -> CID:
+        """Build a balanced DAG from leaf blocks, matching Go's balanced.Layout.
+
+        Each entry tracks (block, file_size, cumulative_size) where:
+        - file_size: total file data bytes under this node
+        - cumulative_size: Go's Node.Size() = len(block.data) + sum(child cumulative sizes)
+        """
+        max_links = DEFAULT_MAX_LINKS
+
+        # Leaves: cumulative_size = len(block.data) (no children)
+        level: list[tuple[Block, int, int]] = [
+            (block, fsize, len(block.data)) for block, fsize in leaves
+        ]
+
+        while len(level) > 1:
+            next_level = []
+            for i in range(0, len(level), max_links):
+                children = level[i:i + max_links]
+                if len(children) == 1:
+                    next_level.append(children[0])
+                    continue
+                links = []
+                blocksizes = []
+                total_filesize = 0
+                total_cum_size = 0
+                for child_block, child_filesize, child_cum_size in children:
+                    links.append((bytes(child_block.cid), child_cum_size))
+                    blocksizes.append(child_filesize)
+                    total_filesize += child_filesize
+                    total_cum_size += child_cum_size
+                unixfs_bytes = encode_unixfs_internal(total_filesize, blocksizes)
+                dag_pb_bytes = encode_dag_pb(unixfs_bytes, links)
+                block = Block.from_data(dag_pb_bytes, codec="dag-pb")
+                self.dag.put(block)
+                # This node's cumulative size = own block size + sum of children's cumulative sizes
+                cum_size = len(dag_pb_bytes) + total_cum_size
+                next_level.append((block, total_filesize, cum_size))
+            level = next_level
+
+        return level[0][0].cid
 
     async def _collect(self, cid: CID, peers: list) -> bytes:
         logger.info(f"Fetching block {cid}")
