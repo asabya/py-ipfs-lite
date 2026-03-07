@@ -304,9 +304,10 @@ class BitswapNetwork:
                     if have_event is not None:
                         have_event.set()
 
+                passive_want_blocks = Wantlist()
                 for presence in msg.block_presences:
                     cid_str = _cid_key(presence.cid)
-                    logger.info(f"handle_stream: presence cid={presence.cid} type={presence.type}")
+                    logger.debug(f"handle_stream: presence cid={presence.cid} type={presence.type}")
                     if presence.type == BlockPresenceType.Have:
                         peer_id = self._peer_id_from_stream(stream)
                         if cid_str in self._have_peers:
@@ -317,9 +318,11 @@ class BitswapNetwork:
                                 have_event.set()
                         elif cid_str in self._passive_cids:
                             cid = self._passive_cids[cid_str]
-                            wl = Wantlist()
-                            wl.add_entry(cid, want_type=WantType.Block, send_dont_have=True)
-                            self._queue_outbound(peer_id, Message(wantlist=wl))
+                            passive_want_blocks.add_entry(cid, want_type=WantType.Block, send_dont_have=True)
+                if passive_want_blocks.entries:
+                    peer_id = self._peer_id_from_stream(stream)
+                    logger.info(f"Passive HAVE→want-block batch ({len(passive_want_blocks.entries)} CIDs) to {peer_id}")
+                    self._queue_outbound(peer_id, Message(wantlist=passive_want_blocks))
 
                 if msg.wantlist is not None and msg.wantlist.entries:
                     peer_id = self._peer_id_from_stream(stream)
@@ -342,7 +345,7 @@ class BitswapNetwork:
             return None
 
     def _queue_outbound(self, peer_id: Any, msg: Message) -> None:
-        if msg.payload or msg.block_presences:
+        if msg.payload or msg.block_presences or (msg.wantlist and msg.wantlist.entries):
             self._outbound_queue.append((peer_id, msg))
             self._outbound_ready.set()
 
@@ -411,12 +414,14 @@ class BitswapNetwork:
 
     async def _run_outbound_sender(self) -> None:
         """Background loop: open new outbound streams to deliver blocks to requesting peers."""
+        logger.info("_run_outbound_sender: started")
         while True:
             await self._outbound_ready.wait()
             await trio.sleep(0)  # yield so multiple responses can accumulate
             batch = self._outbound_queue[:]
             self._outbound_queue.clear()
             self._outbound_ready = trio.Event()
+            logger.info(f"_run_outbound_sender: processing {len(batch)} messages")
             async with trio.open_nursery() as nursery:
                 for peer_id, msg in batch:
                     nursery.start_soon(self._send_response, peer_id, msg)

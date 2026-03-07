@@ -93,6 +93,77 @@ def decode_unixfs_data(data: bytes) -> bytes:
     return b""  # absent = multi-block file; caller must follow links
 
 
+def _encode_varint(value: int) -> bytes:
+    buf = []
+    while value > 0x7F:
+        buf.append((value & 0x7F) | 0x80)
+        value >>= 7
+    buf.append(value & 0x7F)
+    return bytes(buf)
+
+
+def _encode_field(field_number: int, wire_type: int, value: bytes) -> bytes:
+    tag = _encode_varint((field_number << 3) | wire_type)
+    if wire_type == 2:  # length-delimited
+        return tag + _encode_varint(len(value)) + value
+    if wire_type == 0:  # varint
+        return tag + value
+    return tag + value
+
+
+def encode_unixfs_file(data: bytes) -> bytes:
+    """Encode data as a UnixFS Data protobuf (type=File).
+
+    UnixFS Data proto:
+      field 1 (varint): Type = 2 (File)
+      field 2 (bytes):  Data = file content
+      field 3 (uint64): filesize
+    """
+    type_field = _encode_field(1, 0, _encode_varint(2))  # Type.File = 2
+    data_field = _encode_field(2, 2, data)
+    filesize_field = _encode_field(3, 0, _encode_varint(len(data)))
+    return type_field + data_field + filesize_field
+
+
+def encode_unixfs_internal(filesize: int, blocksizes: list[int]) -> bytes:
+    """Encode a UnixFS Data protobuf for an internal (non-leaf) node.
+
+    Internal nodes have type=File, no Data field, filesize = total of children,
+    and repeated blocksizes for each child's file size.
+    """
+    result = _encode_field(1, 0, _encode_varint(2))  # Type.File = 2
+    result += _encode_field(3, 0, _encode_varint(filesize))
+    for bs in blocksizes:
+        result += _encode_field(4, 0, _encode_varint(bs))
+    return result
+
+
+def encode_pb_link(cid_bytes: bytes, tsize: int) -> bytes:
+    """Encode a PBLink with Hash and Tsize (no Name for UnixFS)."""
+    link = _encode_field(1, 2, cid_bytes)  # Hash
+    link += _encode_field(2, 2, b"")       # Name (empty)
+    link += _encode_field(3, 0, _encode_varint(tsize))  # Tsize
+    return link
+
+
+def encode_dag_pb(unixfs_data: bytes, links: list[tuple[bytes, int]] | None = None) -> bytes:
+    """Encode a PBNode with Data and optional Links.
+
+    dag-pb PBNode proto (canonical order: Links before Data):
+      field 2 (repeated): PBLink {Hash, Name, Tsize}
+      field 1 (bytes):    Data = serialized UnixFS Data
+
+    links: list of (cid_bytes, tsize) tuples.
+    """
+    result = b""
+    if links:
+        for cid_bytes, tsize in links:
+            link_bytes = encode_pb_link(cid_bytes, tsize)
+            result += _encode_field(2, 2, link_bytes)
+    result += _encode_field(1, 2, unixfs_data)
+    return result
+
+
 class DAGCodec(Enum):
     """Supported IPLD codecs."""
     DAG_PB = 0x70
