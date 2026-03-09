@@ -22,6 +22,8 @@ uv run python examples/litepeer.py
 
 # Regenerate protobuf bindings (requires grpcio-tools)
 uv run python -m grpc_tools.protoc -I. --python_out=. ipfs_lite/bitswap/pb/message.proto
+uv run python -m grpc_tools.protoc -I. --python_out=. ipfs_lite/dag/pb/dag_pb.proto
+uv run python -m grpc_tools.protoc -I. --python_out=. ipfs_lite/unixfs/pb/unixfs.proto
 ```
 
 ## Architecture
@@ -43,7 +45,7 @@ The library is a Python port of [ipfs-lite (Go)](https://github.com/hsanjuan/ipf
 - **Runtime**: py-libp2p uses `trio` internally. All integration tests call `trio.run()` directly. Do not mix asyncio and trio in the same execution path — `BlockService` has a fallback for this.
 - **Bitswap framing**: Messages are varint-length-prefixed protobuf (go-msgio varint style). See `_read_msg`/`_write_msg` in `network.py`.
 - **Block identity**: `Block.from_data()` always creates CIDv1/base32/sha2-256. CID raw bytes (not string) are used as wantlist entry keys in protobuf (`e.block = bytes(entry.cid)`).
-- **Protobuf**: Generated file is `ipfs_lite/bitswap/pb/message_pb2.py`; source is `message.proto` in the same directory.
+- **Protobuf**: Generated files are `ipfs_lite/bitswap/pb/message_pb2.py`, `ipfs_lite/dag/pb/dag_pb_pb2.py`, and `ipfs_lite/unixfs/pb/unixfs_pb2.py`; sources are `.proto` files in the same directories.
 - **Protocol ID**: `/ipfs/bitswap/1.1.0` registered with the libp2p host via `host.set_stream_handler(...)`.
 
 **Go ipfs-lite interop**: Go's bitswap engine does **not** respond on the same stream as the incoming wantlist. It calls `SendMessage` which opens a **new outbound stream** to push blocks back. Python's `handle_stream` must store arriving blocks and signal any pending `send_want` callers.
