@@ -9,6 +9,7 @@ from ipfs_lite.bitswap.protocol import BitswapProtocol, BITSWAP_PROTOCOL_IDS
 from ipfs_lite.bitswap.network import BitswapNetwork
 from ipfs_lite.exchange.bitswap import BitswapExchange
 from ipfs_lite.dag.service import DAGService
+from libp2p.tools.async_service.trio_service import TrioManager
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,8 @@ class IPFSLitePeer:
             nursery.start_soon(self.network._run_sender)
             nursery.start_soon(self.network._run_outbound_sender)
             if self.dht is not None:
-                nursery.start_soon(self.dht.run)
+                self._dht_manager = TrioManager(self.dht)
+                nursery.start_soon(self._dht_manager.run)
         logger.info(f"IPFSLitePeer started: {self.peer_id}")
 
     async def connect(self, peer_info: Any) -> None:
