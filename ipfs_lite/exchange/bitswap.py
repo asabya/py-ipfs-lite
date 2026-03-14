@@ -20,12 +20,31 @@ class BitswapExchange(Exchange):
 
     async def get_block(self, cid: CID, peers: List) -> Optional[Block]:
         targets = list(peers) if peers else self.network.get_connected_peers()
-        if not targets:
-            logger.warning("No connected peers to fetch block from")
-            return None
-        response = await self.network.broadcast_want(targets, cid)
-        if response and response.payload:
-            return response.payload[0]
+        if targets:
+            response = await self.network.broadcast_want(targets, cid)
+            if response and response.payload:
+                return response.payload[0]
+
+        # DHT fallback: discover providers and try them
+        if self.dht is not None:
+            try:
+                cid_str = str(cid)
+                providers = await self.dht.find_providers(cid_str)
+                if providers:
+                    logger.info(f"DHT found {len(providers)} providers for {cid_str}")
+                    for provider in providers:
+                        try:
+                            await self.network.host.connect(provider)
+                        except Exception:
+                            pass
+                    response = await self.network.broadcast_want(providers, cid)
+                    if response and response.payload:
+                        return response.payload[0]
+            except Exception as e:
+                logger.error(f"DHT find_providers failed: {e}")
+
+        if not targets and self.dht is None:
+            logger.warning("No connected peers and no DHT to fetch block from")
         return None
 
     def add_wants(self, cids: list, peers: list) -> None:
