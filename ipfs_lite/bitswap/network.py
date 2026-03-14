@@ -342,7 +342,7 @@ class BitswapNetwork:
             return None
 
     def _queue_outbound(self, peer_id: Any, msg: Message) -> None:
-        if msg.payload or msg.block_presences:
+        if msg.payload or msg.block_presences or (msg.wantlist and msg.wantlist.entries):
             self._outbound_queue.append((peer_id, msg))
             self._outbound_ready.set()
 
