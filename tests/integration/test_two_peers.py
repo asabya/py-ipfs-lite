@@ -115,3 +115,46 @@ def test_dont_have_returns_none():
                     nursery.cancel_scope.cancel()
 
     trio.run(_run)
+
+
+def test_block_push_after_want():
+    """Peer A wants a block, Peer B adds it later — A receives it via push."""
+
+    async def _run():
+        host_a = _make_host(b"g" * 32)
+        host_b = _make_host(b"h" * 32)
+
+        async with host_a.run(listen_addrs=[LISTEN_ADDR]):
+            async with host_b.run(listen_addrs=[LISTEN_ADDR]):
+                peer_a = IPFSLitePeer(host_a, MemoryBlockstore())
+                peer_b = IPFSLitePeer(host_b, MemoryBlockstore())
+
+                async with trio.open_nursery() as nursery:
+                    await peer_a.start(nursery)
+                    await peer_b.start(nursery)
+
+                    # Connect A → B
+                    peer_b_info = PeerInfo(host_b.get_id(), host_b.get_addrs())
+                    await peer_a.connect(peer_b_info)
+
+                    # Create block (not stored on B yet)
+                    block = Block.from_data(b"pushed later", codec="raw")
+
+                    # A sends want-have to B (B won't have it yet → DONT_HAVE)
+                    # Then register passive want so A listens for push
+                    peer_a.dag.want([block.cid])
+
+                    # Small delay to let want propagate
+                    await trio.sleep(0.2)
+
+                    # B stores the block — notify_new_blocks should push to A
+                    peer_b.dag.put(block)
+
+                    # A waits for block via push
+                    retrieved = await peer_a.dag.wait_for_block(block.cid)
+
+                    assert retrieved is not None
+                    assert retrieved.data == b"pushed later"
+                    nursery.cancel_scope.cancel()
+
+    trio.run(_run)
