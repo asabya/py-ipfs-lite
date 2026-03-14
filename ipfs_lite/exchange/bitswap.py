@@ -1,6 +1,6 @@
 # ipfs_lite/exchange/bitswap.py
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from multiformats import CID
 
@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 class BitswapExchange(Exchange):
     """Exchange implementation using the Bitswap protocol."""
 
-    def __init__(self, network: BitswapNetwork):
+    def __init__(self, network: BitswapNetwork, dht: Any = None):
         self.network = network
+        self.dht = dht
 
     async def get_block(self, cid: CID, peers: List) -> Optional[Block]:
         targets = list(peers) if peers else self.network.get_connected_peers()
