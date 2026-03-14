@@ -70,10 +70,13 @@ async def test_get_block_tries_multiple_peers():
     )
 
 
-async def test_has_block_noop():
-    """has_block is a no-op for now."""
+async def test_has_block_calls_notify():
+    """has_block delegates to network.notify_new_blocks."""
     mock_network = MagicMock()
+    mock_network.notify_new_blocks = MagicMock()
     exchange = BitswapExchange(mock_network)
-    block = Block.from_data(b"announce", codec="raw")
+    block = Block.from_data(b"announce me", codec="raw")
 
-    await exchange.has_block(block)   # should not raise
+    await exchange.has_block(block)
+
+    mock_network.notify_new_blocks.assert_called_once_with([block])

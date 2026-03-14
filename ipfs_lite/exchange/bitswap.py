@@ -34,7 +34,7 @@ class BitswapExchange(Exchange):
         return await self.network.wait_for_block(cid)
 
     async def has_block(self, block: Block) -> None:
-        pass  # Future: announce to connected peers
+        self.network.notify_new_blocks([block])
 
     def notify_new_blocks(self, blocks: list) -> None:
         self.network.notify_new_blocks(blocks)
