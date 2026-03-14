@@ -23,3 +23,8 @@ class Blockstore(ABC):
     def has(self, cid: CID) -> bool:
         """Check if a block exists."""
         pass
+
+    @abstractmethod
+    def all_keys(self) -> list:
+        """Return all CIDs in the blockstore."""
+        pass

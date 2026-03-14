@@ -41,3 +41,19 @@ def test_blockstore_get_not_found():
     result = store.get(fake_cid)
 
     assert result is None
+
+
+def test_memory_blockstore_all_keys():
+    from ipfs_lite.blockstore.memory import MemoryBlockstore
+    from ipfs_lite.block import Block
+
+    bs = MemoryBlockstore()
+    b1 = Block.from_data(b"one", codec="raw")
+    b2 = Block.from_data(b"two", codec="raw")
+    bs.put(b1)
+    bs.put(b2)
+
+    keys = bs.all_keys()
+    assert len(keys) == 2
+    assert b1.cid in keys
+    assert b2.cid in keys
