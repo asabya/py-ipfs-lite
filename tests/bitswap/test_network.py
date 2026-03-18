@@ -12,13 +12,20 @@ from ipfs_lite.bitswap.wantlist import Wantlist, WantType
 from ipfs_lite.bitswap.message import Message, BlockPresence, BlockPresenceType
 
 
+class MockMuxedConn:
+    """Mock muxed connection with peer_id."""
+    def __init__(self, peer_id="QmMockPeer"):
+        self.peer_id = peer_id
+
+
 class MockStream:
     """In-memory stream for testing."""
 
-    def __init__(self, data: bytes = b""):
+    def __init__(self, data: bytes = b"", peer_id="QmMockPeer"):
         self._buf = bytearray(data)
         self.written = bytearray()
         self.closed = False
+        self.muxed_conn = MockMuxedConn(peer_id)
 
     async def read(self, n: int) -> bytes:
         chunk = bytes(self._buf[:n])
@@ -239,8 +246,13 @@ def test_run_sender_sends_want_have():
     trio.run(_run)
 
 
-async def test_handle_stream_returns_block():
-    """handle_stream reads want, writes block response."""
+async def test_handle_stream_queues_response():
+    """handle_stream reads want, queues block for outbound delivery (not same-stream).
+
+    After Go interop changes, handle_stream no longer writes responses on the
+    same stream. Instead it queues them via _queue_outbound for delivery on a
+    new outbound stream.
+    """
     blockstore = MemoryBlockstore()
     block = Block.from_data(b"streamed block", codec="raw")
     blockstore.put(block)
@@ -257,9 +269,10 @@ async def test_handle_stream_returns_block():
     await network.handle_stream(stream)
 
     assert stream.closed is True
-    # Parse written response (varint-length-prefixed)
-    resp_len, offset = _decode_varint(bytes(stream.written), 0)
-    resp_bytes = bytes(stream.written[offset:offset + resp_len])
-    response = decode_message(resp_bytes)
-    assert len(response.payload) == 1
-    assert response.payload[0].data == b"streamed block"
+    # Response is queued for outbound delivery, not written to the same stream
+    assert len(stream.written) == 0
+    # Check the outbound queue has the block
+    assert len(network._outbound_queue) == 1
+    _, queued_msg = network._outbound_queue[0]
+    assert len(queued_msg.payload) == 1
+    assert queued_msg.payload[0].data == b"streamed block"

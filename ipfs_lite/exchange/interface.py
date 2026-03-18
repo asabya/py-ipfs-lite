@@ -17,3 +17,7 @@ class Exchange(ABC):
     @abstractmethod
     async def has_block(self, block: Block) -> None:
         """Announce to connected peers that we have a block."""
+
+    @abstractmethod
+    def notify_new_blocks(self, blocks: list) -> None:
+        """Notify the exchange that new blocks are available locally."""

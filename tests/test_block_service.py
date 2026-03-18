@@ -85,3 +85,19 @@ def test_put_block_no_exchange():
     service = BlockService(store)
 
     service.put_block(block)   # should not raise
+
+
+def test_put_block_calls_notify():
+    """put_block calls exchange.notify_new_blocks synchronously."""
+    from unittest.mock import MagicMock
+    from ipfs_lite.block import Block
+    from ipfs_lite.blockstore.memory import MemoryBlockstore
+
+    mock_exchange = MagicMock()
+    mock_exchange.notify_new_blocks = MagicMock()
+    bs = BlockService(MemoryBlockstore(), exchange=mock_exchange)
+
+    block = Block.from_data(b"notify test", codec="raw")
+    bs.put_block(block)
+
+    mock_exchange.notify_new_blocks.assert_called_once_with([block])

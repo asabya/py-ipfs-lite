@@ -20,3 +20,6 @@ class MemoryBlockstore(Blockstore):
 
     def has(self, cid: CID) -> bool:
         return bytes(cid) in self._blocks
+
+    def all_keys(self) -> list:
+        return [block.cid for block in self._blocks.values()]

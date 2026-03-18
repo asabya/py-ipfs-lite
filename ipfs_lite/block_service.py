@@ -1,5 +1,4 @@
 # ipfs_lite/block_service.py
-import asyncio
 import logging
 from typing import List, Optional
 
@@ -31,11 +30,5 @@ class BlockService:
 
     def put_block(self, block: Block) -> None:
         self.blockstore.put(block)
-        # has_block is a future notification hook; skip scheduling if no
-        # running event loop is available (e.g. sync or trio contexts).
         if self.exchange is not None:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self.exchange.has_block(block))
-            except RuntimeError:
-                pass  # No running asyncio loop (e.g. trio backend); skip task
+            self.exchange.notify_new_blocks([block])

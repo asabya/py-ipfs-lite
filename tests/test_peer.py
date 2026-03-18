@@ -34,7 +34,7 @@ async def test_peer_start_registers_handler():
 
     await peer.start()
 
-    host.set_stream_handler.assert_called_once_with(
+    host.set_stream_handler.assert_any_call(
         BitswapNetwork.PROTOCOL_ID,
         peer.network.handle_stream,
     )

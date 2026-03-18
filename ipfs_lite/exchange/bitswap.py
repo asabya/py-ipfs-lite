@@ -1,6 +1,6 @@
 # ipfs_lite/exchange/bitswap.py
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from multiformats import CID
 
@@ -14,17 +14,37 @@ logger = logging.getLogger(__name__)
 class BitswapExchange(Exchange):
     """Exchange implementation using the Bitswap protocol."""
 
-    def __init__(self, network: BitswapNetwork):
+    def __init__(self, network: BitswapNetwork, dht: Any = None):
         self.network = network
+        self.dht = dht
 
     async def get_block(self, cid: CID, peers: List) -> Optional[Block]:
         targets = list(peers) if peers else self.network.get_connected_peers()
-        if not targets:
-            logger.warning("No connected peers to fetch block from")
-            return None
-        response = await self.network.broadcast_want(targets, cid)
-        if response and response.payload:
-            return response.payload[0]
+        if targets:
+            response = await self.network.broadcast_want(targets, cid)
+            if response and response.payload:
+                return response.payload[0]
+
+        # DHT fallback: discover providers and try them
+        if self.dht is not None:
+            try:
+                cid_str = str(cid)
+                providers = await self.dht.find_providers(cid_str)
+                if providers:
+                    logger.info(f"DHT found {len(providers)} providers for {cid_str}")
+                    for provider in providers:
+                        try:
+                            await self.network.host.connect(provider)
+                        except Exception:
+                            pass
+                    response = await self.network.broadcast_want(providers, cid)
+                    if response and response.payload:
+                        return response.payload[0]
+            except Exception as e:
+                logger.error(f"DHT find_providers failed: {e}")
+
+        if not targets and self.dht is None:
+            logger.warning("No connected peers and no DHT to fetch block from")
         return None
 
     def add_wants(self, cids: list, peers: list) -> None:
@@ -34,7 +54,7 @@ class BitswapExchange(Exchange):
         return await self.network.wait_for_block(cid)
 
     async def has_block(self, block: Block) -> None:
-        pass  # Future: announce to connected peers
+        self.network.notify_new_blocks([block])
 
     def notify_new_blocks(self, blocks: list) -> None:
         self.network.notify_new_blocks(blocks)

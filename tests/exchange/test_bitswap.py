@@ -70,10 +70,39 @@ async def test_get_block_tries_multiple_peers():
     )
 
 
-async def test_has_block_noop():
-    """has_block is a no-op for now."""
-    mock_network = MagicMock()
-    exchange = BitswapExchange(mock_network)
-    block = Block.from_data(b"announce", codec="raw")
+async def test_get_block_dht_fallback():
+    """get_block queries DHT when no connected peers have the block."""
+    block = Block.from_data(b"dht found", codec="raw")
 
-    await exchange.has_block(block)   # should not raise
+    mock_network = MagicMock()
+    mock_network.get_connected_peers = MagicMock(return_value=[])
+    mock_network.host = MagicMock()
+    mock_network.host.connect = AsyncMock()
+    # No connected peers, so broadcast_want is only called once: with DHT-discovered providers
+    mock_network.broadcast_want = AsyncMock(
+        return_value=Message(payload=[block])
+    )
+
+    dht_peer = _make_peer_info("QmDHTPeer")
+    mock_dht = MagicMock()
+    mock_dht.find_providers = AsyncMock(return_value=[dht_peer])
+
+    exchange = BitswapExchange(mock_network, dht=mock_dht)
+
+    result = await exchange.get_block(block.cid, peers=[])
+
+    assert result is not None
+    assert result.data == b"dht found"
+    mock_dht.find_providers.assert_called_once()
+
+
+async def test_has_block_calls_notify():
+    """has_block delegates to network.notify_new_blocks."""
+    mock_network = MagicMock()
+    mock_network.notify_new_blocks = MagicMock()
+    exchange = BitswapExchange(mock_network)
+    block = Block.from_data(b"announce me", codec="raw")
+
+    await exchange.has_block(block)
+
+    mock_network.notify_new_blocks.assert_called_once_with([block])

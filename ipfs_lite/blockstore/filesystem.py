@@ -33,3 +33,16 @@ class FilesystemBlockstore(Blockstore):
 
     def has(self, cid: CID) -> bool:
         return self._cid_to_path(cid).exists()
+
+    def all_keys(self) -> list:
+        keys = []
+        for subdir in self._path.iterdir():
+            if subdir.is_dir():
+                for entry in subdir.iterdir():
+                    if entry.is_file():
+                        cid_str = subdir.name + entry.name
+                        try:
+                            keys.append(CID.decode(cid_str))
+                        except Exception:
+                            pass
+        return keys
